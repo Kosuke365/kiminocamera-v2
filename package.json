@@ -1,0 +1,17 @@
+{
+  "name": "kiminocamera-v2",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  },
+  "dependencies": {
+    "qr-scanner": "^1.4.2"
+  }
+}

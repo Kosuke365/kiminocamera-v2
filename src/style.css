@@ -1,0 +1,886 @@
+/* =========================================
+   KIMINO Camera - QR入退室スキャナー
+   白基調・クリーン・余白重視
+   ========================================= */
+
+:root {
+  --bg-primary: #f5f7fa;
+  --bg-white: #ffffff;
+  --bg-card: #ffffff;
+  --text-primary: #1a1a2e;
+  --text-secondary: #6b7280;
+  --text-muted: #9ca3af;
+  --accent: #FF9F43;
+  --accent-light: #fff4e6;
+  --accent-dark: #e8880a;
+  --success: #10b981;
+  --success-bg: #ecfdf5;
+  --success-border: #a7f3d0;
+  --danger: #ef4444;
+  --danger-bg: #fef2f2;
+  --danger-border: #fecaca;
+  --border: #e5e7eb;
+  --border-light: #f3f4f6;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --radius: 16px;
+  --radius-lg: 24px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ======== Header ======== */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 28px;
+  background: var(--bg-white);
+  border-bottom: 1px solid var(--border);
+  z-index: 10;
+  flex-shrink: 0;
+  height: 56px;
+}
+
+.header-brand h1 {
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--accent);
+  letter-spacing: -0.5px;
+}
+
+.header-brand .subtitle {
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.header-stats {
+  display: flex;
+  gap: 12px;
+}
+
+.mini-stat {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.mini-stat strong {
+  color: var(--accent);
+  font-size: 15px;
+  margin-left: 2px;
+}
+
+.header-clock-wrap {
+  text-align: right;
+}
+
+.header-clock {
+  font-size: 20px;
+  font-weight: 900;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.header-date {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.campus-badge {
+  padding: 5px 14px;
+  background: var(--accent-light);
+  color: var(--accent-dark);
+  border: 1px solid rgba(255, 159, 67, 0.2);
+  border-radius: 100px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.btn-settings {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 10px;
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  font-size: 15px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-settings:hover {
+  background: var(--border);
+}
+
+/* ======== Main Content ======== */
+.main-content {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 0;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+/* ======== Step 1: 入退室選択 ======== */
+.action-select {
+  text-align: center;
+  max-width: 480px;
+  width: 100%;
+}
+
+.action-select-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-bottom: 12px;
+}
+
+.action-select-heading {
+  font-size: 28px;
+  font-weight: 900;
+  color: var(--text-primary);
+  margin-bottom: 48px;
+  line-height: 1.3;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+}
+
+.big-action-btn {
+  width: 200px;
+  height: 200px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: var(--bg-white);
+  box-shadow: var(--shadow-sm);
+}
+
+.big-action-btn:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+}
+
+.big-action-btn:active {
+  transform: scale(0.96);
+}
+
+.big-action-btn.enter:hover {
+  border-color: var(--success);
+  background: var(--success-bg);
+}
+
+.big-action-btn.exit:hover {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.big-action-icon {
+  font-size: 48px;
+}
+
+.big-action-label {
+  font-size: 20px;
+  font-weight: 900;
+  color: var(--text-primary);
+}
+
+.big-action-btn.enter .big-action-label {
+  color: var(--success);
+}
+
+.big-action-btn.exit .big-action-label {
+  color: var(--danger);
+}
+
+/* ======== Step 2: スキャン画面 ======== */
+.scan-screen {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.scan-info-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+  padding: 20px 0;
+  flex: 1;
+}
+
+.big-clock {
+  font-size: 96px;
+  font-weight: 900;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: -3px;
+}
+
+.big-date {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-bottom: 24px;
+}
+
+.scan-type-badge {
+  display: inline-block;
+  padding: 6px 20px;
+  border-radius: 100px;
+  font-size: 14px;
+  font-weight: 800;
+  margin-bottom: 12px;
+}
+
+.scan-type-badge.enter {
+  background: var(--success-bg);
+  color: var(--success);
+  border: 1px solid var(--success-border);
+}
+
+.scan-type-badge.exit {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border: 1px solid var(--danger-border);
+}
+
+.scan-auto-badge {
+  display: inline-block;
+  padding: 8px 24px;
+  border-radius: 100px;
+  font-size: 20px;
+  font-weight: 800;
+  margin-bottom: 12px;
+  background: linear-gradient(135deg, var(--accent-light), #e0f2fe);
+  color: var(--accent-dark);
+  border: 1px solid rgba(255, 159, 67, 0.2);
+  animation: autoBadgePulse 2s ease-in-out infinite;
+}
+
+@keyframes autoBadgePulse {
+
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 159, 67, 0.3);
+  }
+
+  50% {
+    box-shadow: 0 0 0 8px rgba(255, 159, 67, 0);
+  }
+}
+
+.enter-stat strong {
+  color: var(--success) !important;
+}
+
+.exit-stat strong {
+  color: var(--danger) !important;
+}
+
+.inroom-stat {
+  background: var(--accent-light);
+  padding: 2px 8px;
+  border-radius: 100px;
+}
+
+.inroom-stat strong {
+  color: var(--accent-dark) !important;
+}
+
+.scan-instruction {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.camera-container {
+  position: relative;
+  width: 50%;
+  min-width: 50%;
+  height: 100%;
+  background: #000;
+  border-radius: 0;
+  overflow: hidden;
+}
+
+#qr-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.scanner-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.scan-frame {
+  width: 280px;
+  height: 280px;
+  position: relative;
+}
+
+.scan-frame::before,
+.scan-frame::after,
+.scan-corner-bl,
+.scan-corner-br {
+  content: '';
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(255, 255, 255, 0.8);
+}
+
+.scan-frame::before {
+  top: 0;
+  left: 0;
+  border-right: none;
+  border-bottom: none;
+  border-radius: 6px 0 0 0;
+}
+
+.scan-frame::after {
+  top: 0;
+  right: 0;
+  border-left: none;
+  border-bottom: none;
+  border-radius: 0 6px 0 0;
+}
+
+.scan-corner-bl {
+  bottom: 0;
+  left: 0;
+  border-right: none;
+  border-top: none;
+  border-radius: 0 0 0 6px;
+}
+
+.scan-corner-br {
+  bottom: 0;
+  right: 0;
+  border-left: none;
+  border-top: none;
+  border-radius: 0 0 6px 0;
+}
+
+.scan-line {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: scanLine 2.5s ease-in-out infinite;
+  opacity: 0.8;
+}
+
+@keyframes scanLine {
+
+  0%,
+  100% {
+    top: 8px;
+  }
+
+  50% {
+    top: calc(100% - 8px);
+  }
+}
+
+.camera-toggle-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  padding: 8px 16px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 100px;
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.camera-toggle-btn:hover {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.scan-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 28px;
+  background: var(--bg-white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.scan-back-btn:hover {
+  background: var(--bg-primary);
+  border-color: var(--text-muted);
+}
+
+/* ======== Result Popup ======== */
+.result-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.25s;
+}
+
+.result-overlay.visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.result-card {
+  width: 90%;
+  max-width: 400px;
+  background: var(--bg-white);
+  border-radius: var(--radius-lg);
+  padding: 48px 36px 36px;
+  text-align: center;
+  transform: scale(0.92) translateY(16px);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: var(--shadow-lg);
+  position: relative;
+}
+
+.result-overlay.visible .result-card {
+  transform: scale(1) translateY(0);
+}
+
+.result-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.result-close:hover {
+  background: var(--border);
+  color: var(--text-primary);
+}
+
+.result-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  margin: 0 auto 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+  animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.result-icon.enter {
+  background: var(--success-bg);
+  border: 2px solid var(--success-border);
+}
+
+.result-icon.exit {
+  background: var(--danger-bg);
+  border: 2px solid var(--danger-border);
+}
+
+@keyframes popIn {
+  0% {
+    transform: scale(0);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+.result-message {
+  font-size: 24px;
+  font-weight: 900;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+.result-name-highlight {
+  color: var(--accent);
+}
+
+.result-name-highlight.enter-color {
+  color: var(--success);
+}
+
+.result-name-highlight.exit-color {
+  color: var(--danger);
+}
+
+.result-sub {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 28px;
+}
+
+.result-time {
+  display: inline-block;
+  padding: 8px 20px;
+  background: var(--bg-primary);
+  border-radius: 100px;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ======== Settings Modal ======== */
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.25s;
+}
+
+.settings-overlay.visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.settings-card {
+  width: 90%;
+  max-width: 400px;
+  background: var(--bg-white);
+  border-radius: var(--radius-lg);
+  padding: 36px 28px;
+  box-shadow: var(--shadow-lg);
+  transform: scale(0.92);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.settings-overlay.visible .settings-card {
+  transform: scale(1);
+}
+
+.settings-title {
+  font-size: 20px;
+  font-weight: 900;
+  margin-bottom: 24px;
+  color: var(--text-primary);
+}
+
+.form-group {
+  margin-bottom: 18px;
+}
+
+.form-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+}
+
+.form-select {
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%236b7280' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  transition: border-color 0.2s;
+}
+
+.form-select:focus {
+  border-color: var(--accent);
+}
+
+.btn-save {
+  width: 100%;
+  padding: 14px;
+  border: none;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+  color: white;
+  font-size: 15px;
+  font-weight: 900;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-top: 6px;
+  font-family: inherit;
+}
+
+.btn-save:hover {
+  opacity: 0.9;
+}
+
+.btn-save:active {
+  transform: scale(0.97);
+}
+
+.btn-cancel-settings {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-top: 10px;
+  font-family: inherit;
+}
+
+.btn-cancel-settings:hover {
+  background: var(--bg-primary);
+}
+
+/* ======== Error Banner ======== */
+.error-banner {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--danger);
+  color: white;
+  padding: 10px 22px;
+  border-radius: 100px;
+  font-size: 13px;
+  font-weight: 700;
+  z-index: 500;
+  box-shadow: 0 4px 16px rgba(239, 68, 68, 0.3);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.error-banner.visible {
+  opacity: 1;
+}
+
+/* ======== Setup Screen ======== */
+.setup-screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  text-align: center;
+  background: var(--bg-primary);
+}
+
+.setup-icon {
+  font-size: 56px;
+  margin-bottom: 20px;
+}
+
+.setup-title {
+  font-size: 24px;
+  font-weight: 900;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.setup-desc {
+  font-size: 14px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  margin-bottom: 32px;
+  max-width: 360px;
+  line-height: 1.6;
+}
+
+/* ======== Responsive ======== */
+@media (max-width: 600px) {
+  .main-content {
+    padding: 24px 16px;
+    padding-left: 16px;
+    justify-content: center;
+  }
+
+  .scan-screen {
+    flex-direction: column;
+    height: auto;
+    max-height: none;
+    gap: 20px;
+  }
+
+  .scan-info-panel {
+    align-items: center;
+    text-align: center;
+  }
+
+  .action-select-heading {
+    font-size: 22px;
+    margin-bottom: 36px;
+  }
+
+  .action-buttons {
+    gap: 16px;
+  }
+
+  .big-action-btn {
+    width: 150px;
+    height: 150px;
+    gap: 12px;
+  }
+
+  .big-action-icon {
+    font-size: 36px;
+  }
+
+  .big-action-label {
+    font-size: 16px;
+  }
+
+  .camera-container {
+    width: 100%;
+    min-width: unset;
+    height: 340px;
+  }
+
+  .scan-frame {
+    width: 220px;
+    height: 220px;
+  }
+
+  .header {
+    padding: 10px 16px;
+    height: 48px;
+  }
+
+  .header-stats {
+    display: none;
+  }
+
+  .campus-badge {
+    display: none;
+  }
+
+  .header-brand h1 {
+    font-size: 15px;
+  }
+}
+
+@media (max-width: 400px) {
+  .big-action-btn {
+    width: 130px;
+    height: 130px;
+  }
+
+  .camera-container {
+    height: 300px;
+  }
+}
