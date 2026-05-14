@@ -189,8 +189,7 @@ async function onScanSuccess(decodedText) {
 // Record Log
 // =========================================
 async function recordLog(student, type) {
-  // スキャナー停止
-  await stopScanner();
+  // cooldownでスキャンを一時停止（カメラ映像はそのまま維持）
 
   // ポップアップ表示
   showResultPopup(student, type);
@@ -265,8 +264,6 @@ function hideResultPopup() {
   if (!overlay.classList.contains('visible')) return;
   overlay.classList.remove('visible');
   state.cooldown = false;
-  // スキャン自動再開
-  setTimeout(() => startScanner(), 300);
 }
 
 // =========================================
