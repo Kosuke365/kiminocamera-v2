@@ -8,6 +8,8 @@ import QrScanner from 'qr-scanner';
 // Vite環境変数 VITE_API_BASE で上書き可能
 const API_BASE = import.meta.env.VITE_API_BASE
   || (window.location.hostname === 'localhost' ? 'http://localhost:3000' : 'https://kiminoportal-v2.vercel.app');
+const API_TIMEOUT_MS = 15000;
+const STATS_SYNC_INTERVAL_MS = 30000;
 
 // =========================================
 // State
@@ -41,17 +43,39 @@ const state = {
   scanner: null,
   scanning: false,
   cooldown: false,
+  logging: false,
   cameraFacing: 'user',  // 'user' (内カメ) or 'environment' (外カメ)
   clockIntervalId: null, // setIntervalのリーク防止用
+  statsIntervalId: null,
+  syncingStats: false,
+  popupTimeoutId: null,
+  scannerStartTimeoutId: null,
 };
 
 // =========================================
 // v2 API
 // =========================================
+async function fetchJsonWithTimeout(path, options = {}, timeoutMs = API_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    }
+    return await res.json();
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function apiGet(path) {
   try {
-    const res = await fetch(`${API_BASE}${path}`);
-    return await res.json();
+    return await fetchJsonWithTimeout(path);
   } catch (e) {
     console.error('API GET Error:', path, e);
     throw e;
@@ -60,12 +84,11 @@ async function apiGet(path) {
 
 async function apiPost(path, data = {}) {
   try {
-    const res = await fetch(`${API_BASE}${path}`, {
+    return await fetchJsonWithTimeout(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-    return await res.json();
   } catch (e) {
     console.error('API POST Error:', path, e);
     throw e;
@@ -138,6 +161,10 @@ async function startScanner() {
   const videoEl = document.getElementById('qr-video');
   if (!videoEl) return;
 
+  if (state.scanner) {
+    destroyScanner();
+  }
+
   state.scanner = new QrScanner(
     videoEl,
     result => onScanSuccess(result.data),
@@ -154,35 +181,54 @@ async function startScanner() {
     state.scanning = true;
     console.log('📷 Scanner started');
   } catch (err) {
+    destroyScanner();
     console.error('Scanner error:', err);
     showError('カメラの起動に失敗しました。カメラの権限を確認してください。');
   }
 }
 
 async function stopScanner() {
-  if (state.scanner && state.scanning) {
+  if (state.scanner) {
     state.scanner.stop();
+  }
+  state.scanning = false;
+}
+
+function destroyScanner() {
+  if (!state.scanner) return;
+  try {
+    state.scanner.stop();
+    state.scanner.destroy();
+  } catch (e) {
+    console.warn('Scanner cleanup failed:', e);
+  } finally {
+    state.scanner = null;
     state.scanning = false;
   }
 }
 
 async function onScanSuccess(decodedText) {
-  if (state.cooldown) return;
+  if (state.cooldown || state.logging) return;
   state.cooldown = true;
+  state.logging = true;
 
-  if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+  try {
+    if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
 
-  const student = findStudent(decodedText);
+    const student = findStudent(decodedText);
 
-  if (!student) {
-    showError(`ID「${decodedText}」の生徒が見つかりません`);
-    setTimeout(() => { state.cooldown = false; }, 2000);
-    return;
+    if (!student) {
+      showError(`ID「${decodedText}」の生徒が見つかりません`);
+      setTimeout(() => { state.cooldown = false; }, 2000);
+      return;
+    }
+
+    // サーバーに問い合わせて自動判定
+    const action = await getAutoAction(student.id);
+    await recordLog(student, action);
+  } finally {
+    state.logging = false;
   }
-
-  // サーバーに問い合わせて自動判定
-  const action = await getAutoAction(student.id);
-  recordLog(student, action);
 }
 
 // =========================================
@@ -223,7 +269,7 @@ async function recordLog(student, type) {
     }
     console.log(`✅ ${student.name} ${logRes.type || type} logged`);
     // サーバーから正確な統計を取得
-    syncStatsFromServer();
+    void syncStatsFromServer();
   } catch (e) {
     console.error('Log failed:', e);
     showError('ログの送信に失敗しました');
@@ -254,15 +300,20 @@ function showResultPopup(student, type) {
   overlay.classList.add('visible');
 
   // 3秒後に自動で閉じてスキャン再開
-  setTimeout(() => {
+  if (state.popupTimeoutId) clearTimeout(state.popupTimeoutId);
+  state.popupTimeoutId = setTimeout(() => {
     hideResultPopup();
   }, 3000);
 }
 
 function hideResultPopup() {
   const overlay = document.getElementById('result-overlay');
-  if (!overlay.classList.contains('visible')) return;
+  if (!overlay || !overlay.classList.contains('visible')) return;
   overlay.classList.remove('visible');
+  if (state.popupTimeoutId) {
+    clearTimeout(state.popupTimeoutId);
+    state.popupTimeoutId = null;
+  }
   state.cooldown = false;
 }
 
@@ -295,7 +346,8 @@ function getInRoomStudents() {
 
 // v2 APIからリアルタイム統計を取得して表示を更新
 async function syncStatsFromServer() {
-  if (!state.campus) return;
+  if (!state.campus || state.syncingStats) return;
+  state.syncingStats = true;
   try {
     const campusParam = encodeURIComponent(state.campus);
     const res = await apiGet(`/api/attendance/room-status?campus=${campusParam}`);
@@ -313,7 +365,18 @@ async function syncStatsFromServer() {
     }
   } catch (e) {
     console.warn('統計同期失敗（ローカル値を維持）:', e);
+  } finally {
+    state.syncingStats = false;
   }
+}
+
+function startStatsSync() {
+  if (state.statsIntervalId) {
+    clearInterval(state.statsIntervalId);
+  }
+  state.statsIntervalId = setInterval(() => {
+    void syncStatsFromServer();
+  }, STATS_SYNC_INTERVAL_MS);
 }
 
 // =========================================
@@ -397,6 +460,8 @@ function renderSetup() {
 function renderMain() {
   const camLabel = state.cameraFacing === 'user' ? '外カメに切替' : '内カメに切替';
 
+  destroyScanner();
+
   document.getElementById('app').innerHTML = `
     <!-- ヘッダー -->
     <div class="header">
@@ -464,7 +529,13 @@ function renderMain() {
   updateStats();
 
   // カメラ起動
-  setTimeout(() => startScanner(), 500);
+  if (state.scannerStartTimeoutId) {
+    clearTimeout(state.scannerStartTimeoutId);
+  }
+  state.scannerStartTimeoutId = setTimeout(() => {
+    state.scannerStartTimeoutId = null;
+    void startScanner();
+  }, 500);
 }
 
 function renderSettingsModal() {
@@ -502,12 +573,8 @@ window.__hideSettings = hideSettings;
 window.__saveSettings = saveSettings;
 window.__hideResult = hideResultPopup;
 window.__toggleCamera = async function() {
-  await stopScanner();
+  destroyScanner();
   state.cameraFacing = state.cameraFacing === 'user' ? 'environment' : 'user';
-  if (state.scanner) {
-    state.scanner.destroy();
-    state.scanner = null;
-  }
   renderMain();
 };
 window.__startWithCampus = async function() {
@@ -518,8 +585,8 @@ window.__startWithCampus = async function() {
   renderMain();
   await loadStudents();
   updateStats();
-  syncStatsFromServer();
-  setInterval(() => syncStatsFromServer(), 30000);
+  void syncStatsFromServer();
+  startStatsSync();
 };
 
 // =========================================
@@ -540,10 +607,10 @@ document.addEventListener('visibilitychange', () => {
     // スキャナーが停止していたら再起動
     if (!state.scanning && !state.cooldown) {
       console.log('📷 スキャナー再起動...');
-      startScanner();
+      void startScanner();
     }
     // サーバーから統計を再同期
-    syncStatsFromServer();
+    void syncStatsFromServer();
   }
 });
 
@@ -552,6 +619,7 @@ let wakeLock = null;
 async function requestWakeLock() {
   try {
     if ('wakeLock' in navigator) {
+      if (wakeLock && !wakeLock.released) return;
       wakeLock = await navigator.wakeLock.request('screen');
       wakeLock.addEventListener('release', () => {
         console.log('⚡ Wake Lock released');
@@ -570,6 +638,13 @@ document.addEventListener('visibilitychange', async () => {
   }
 });
 
+window.addEventListener('pagehide', () => {
+  destroyScanner();
+  if (state.clockIntervalId) clearInterval(state.clockIntervalId);
+  if (state.statsIntervalId) clearInterval(state.statsIntervalId);
+  if (state.scannerStartTimeoutId) clearTimeout(state.scannerStartTimeoutId);
+});
+
 // =========================================
 // Init
 // =========================================
@@ -579,9 +654,9 @@ async function init() {
     await loadStudents();
     updateStats();
     // サーバーから正確な統計を取得
-    syncStatsFromServer();
+    void syncStatsFromServer();
     // 30秒ごとにサーバーと同期（他デバイスのスキャンも反映）
-    setInterval(() => syncStatsFromServer(), 30000);
+    startStatsSync();
     await requestWakeLock();
   } else {
     renderSetup();

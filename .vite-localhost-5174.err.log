@@ -1,0 +1,9 @@
+http://localhost:3010 : 用語 'http://localhost:3010' は、コマンドレット、関数、スクリプト ファイル、または操作可能なプ
+ログラムの名前として認識されません。名前が正しく記述されていることを確認し、パスが含まれている場合はそのパスが正しいこ
+とを確認してから、再試行してください。
+発生場所 行:1 文字:20
++ $env:VITE_API_BASE=http://localhost:3010; npm.cmd run dev -- --host 1 ...
++                    ~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (http://localhost:3010:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
