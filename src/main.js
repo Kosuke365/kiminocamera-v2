@@ -10,6 +10,11 @@ const API_BASE = import.meta.env.VITE_API_BASE
   || (window.location.hostname === 'localhost' ? 'http://localhost:3000' : 'https://kiminoportal-v2.vercel.app');
 const API_TIMEOUT_MS = 15000;
 const STATS_SYNC_INTERVAL_MS = 30000;
+const CAMERA_HEALTH_INTERVAL_MS = 5000;
+// カメラ起動がこの時間を過ぎても終わらない場合は応答なしとみなす
+const RESTART_STUCK_MS = 30000;
+// この時間を超えてcooldownが解除されない場合は異常とみなして強制解除する
+const COOLDOWN_MAX_MS = 10000;
 
 // =========================================
 // State
@@ -43,14 +48,27 @@ const state = {
   scanner: null,
   scanning: false,
   cooldown: false,
+  cooldownSince: 0,
   logging: false,
+  restarting: false,
+  restartingSince: 0,
+  startFailures: 0,
+  nextRetryAt: 0,
   cameraFacing: 'user',  // 'user' (内カメ) or 'environment' (外カメ)
   clockIntervalId: null, // setIntervalのリーク防止用
   statsIntervalId: null,
+  cameraHealthIntervalId: null,
   syncingStats: false,
   popupTimeoutId: null,
   scannerStartTimeoutId: null,
 };
+
+// cooldown中はスキャンを受け付けない。解除漏れが起きると
+// カメラが映っているのに無反応になるため、必ずこの関数経由で切り替える
+function setCooldown(on) {
+  state.cooldown = on;
+  state.cooldownSince = on ? Date.now() : 0;
+}
 
 // =========================================
 // v2 API
@@ -153,6 +171,14 @@ function updateClock() {
   if (bigDateEl) bigDateEl.textContent = dateStr;
 }
 
+function startClock() {
+  updateClock();
+  if (state.clockIntervalId) {
+    clearInterval(state.clockIntervalId);
+  }
+  state.clockIntervalId = setInterval(updateClock, 1000);
+}
+
 // =========================================
 // QR Scanner (qr-scanner by nimiq)
 // =========================================
@@ -179,23 +205,130 @@ async function startScanner() {
   try {
     await state.scanner.start();
     state.scanning = true;
+    watchCameraTracks();
     console.log('📷 Scanner started');
   } catch (err) {
     destroyScanner();
     console.error('Scanner error:', err);
-    showError('カメラの起動に失敗しました。カメラの権限を確認してください。');
+    // 再試行のたびにバナーが点滅しないよう、最初の失敗時のみ通知する
+    if (state.startFailures === 0) {
+      showError('カメラの起動に失敗しました。カメラの権限を確認してください。');
+    }
   }
 }
 
-async function stopScanner() {
-  if (state.scanner) {
-    state.scanner.stop();
+// OSや他アプリの割り込みでカメラのトラックが終了した場合に即座に検知する。
+// 明示的なstop()ではendedは発火しないため、意図しない停止のみを拾う
+function watchCameraTracks() {
+  const videoEl = document.getElementById('qr-video');
+  const stream = videoEl && videoEl.srcObject;
+  if (!stream || typeof stream.getVideoTracks !== 'function') return;
+  stream.getVideoTracks().forEach(track => {
+    track.addEventListener('ended', () => {
+      console.warn('📷 カメラのトラックが終了しました');
+      state.scanning = false;
+      void restartScanner('track-ended');
+    }, { once: true });
+  });
+}
+
+// state.scanningはトラックが死んでもtrueのまま残るため、
+// 実際の映像が生きているかはvideo要素から直接確認する
+function getCameraHealth() {
+  const videoEl = document.getElementById('qr-video');
+  if (!videoEl) return 'no-element';
+  const stream = videoEl.srcObject;
+  if (!stream || typeof stream.getVideoTracks !== 'function') return 'no-stream';
+  if (!stream.getVideoTracks().some(t => t.readyState === 'live')) return 'dead-track';
+  if (videoEl.paused || videoEl.ended) return 'paused';
+  return 'ok';
+}
+
+// 応答が返らない再起動でフラグが立ちっぱなしになった場合、
+// 後続の再起動が古い処理のfinallyでフラグを消されないようにする
+let restartToken = 0;
+
+async function restartScanner(reason) {
+  if (state.restarting) return;
+  state.restarting = true;
+  state.restartingSince = Date.now();
+  const myToken = ++restartToken;
+  try {
+    console.log(`📷 スキャナーを再起動します (${reason})`);
+    destroyScanner();
+    await startScanner();
+    // start()は映像が来ていなくても成功を返すことがあるため、
+    // 例外の有無ではなく実際に復旧できたかで成否を判定する
+    const health = getCameraHealth();
+    if (state.scanning && (health === 'ok' || health === 'paused')) {
+      state.startFailures = 0;
+      state.nextRetryAt = 0;
+    } else {
+      // 復旧しない状況で5秒ごとに再起動し続けないよう間隔を広げる
+      state.startFailures++;
+      state.nextRetryAt = Date.now() + Math.min(60000, 5000 * state.startFailures);
+      console.warn(`📷 再起動しても復旧しませんでした (health=${health}) — 次の再試行まで${Math.min(60, 5 * state.startFailures)}秒待機します`);
+    }
+  } finally {
+    if (myToken === restartToken) {
+      state.restarting = false;
+    }
   }
-  state.scanning = false;
+}
+
+async function checkCameraHealth() {
+  if (!state.campus) return;
+  if (document.visibilityState !== 'visible') return;
+  // 起動処理と競合させない。ただしカメラが応答せず再起動が終わらない場合は、
+  // フラグを解除しないとリカバリーが二度と動かなくなる
+  if (state.restarting) {
+    if (Date.now() - state.restartingSince <= RESTART_STUCK_MS) return;
+    console.warn('📷 カメラの起動が応答しません — 再試行できる状態に戻します');
+    state.restarting = false;
+  }
+  if (state.scannerStartTimeoutId) return;
+
+  // ポップアップが閉じられずcooldownが残ると、映像は生きたまま無反応になる
+  if (state.cooldown && Date.now() - state.cooldownSince > COOLDOWN_MAX_MS) {
+    console.warn('⏱ cooldownが解除されていません — 強制解除します');
+    hideResultPopup();
+  }
+
+  const videoEl = document.getElementById('qr-video');
+  if (!videoEl) return; // スキャン画面を表示していない
+
+  const health = getCameraHealth();
+  if (state.scanning && health === 'ok') return;
+
+  // 映像が一時停止しているだけなら再生の再開で復帰できる
+  if (state.scanning && health === 'paused') {
+    try {
+      await videoEl.play();
+      console.log('📷 映像の再生を再開しました');
+      return;
+    } catch (e) {
+      console.warn('映像の再生に失敗しました:', e);
+    }
+  }
+
+  if (Date.now() < state.nextRetryAt) return;
+  await restartScanner(`health=${health}, scanning=${state.scanning}`);
+}
+
+function startCameraHealthCheck() {
+  if (state.cameraHealthIntervalId) {
+    clearInterval(state.cameraHealthIntervalId);
+  }
+  state.cameraHealthIntervalId = setInterval(() => {
+    void checkCameraHealth();
+  }, CAMERA_HEALTH_INTERVAL_MS);
 }
 
 function destroyScanner() {
-  if (!state.scanner) return;
+  if (!state.scanner) {
+    state.scanning = false;
+    return;
+  }
   try {
     state.scanner.stop();
     state.scanner.destroy();
@@ -209,7 +342,7 @@ function destroyScanner() {
 
 async function onScanSuccess(decodedText) {
   if (state.cooldown || state.logging) return;
-  state.cooldown = true;
+  setCooldown(true);
   state.logging = true;
 
   try {
@@ -219,13 +352,18 @@ async function onScanSuccess(decodedText) {
 
     if (!student) {
       showError(`ID「${decodedText}」の生徒が見つかりません`);
-      setTimeout(() => { state.cooldown = false; }, 2000);
+      setTimeout(() => { setCooldown(false); }, 2000);
       return;
     }
 
     // サーバーに問い合わせて自動判定
     const action = await getAutoAction(student.id);
     await recordLog(student, action);
+  } catch (e) {
+    // ここでcooldownを戻さないとスキャンが二度と再開しない
+    console.error('スキャン処理に失敗しました:', e);
+    showError('処理に失敗しました。もう一度かざしてください。');
+    setCooldown(false);
   } finally {
     state.logging = false;
   }
@@ -285,6 +423,7 @@ function showResultPopup(student, type) {
   const message = document.getElementById('result-message');
   const sub = document.getElementById('result-sub');
   const time = document.getElementById('result-time');
+  if (!overlay || !icon || !message || !sub || !time) return;
 
   icon.className = 'result-icon ' + (type === '入室' ? 'enter' : 'exit');
   icon.textContent = type === '入室' ? '🏫' : '👋';
@@ -308,13 +447,13 @@ function showResultPopup(student, type) {
 
 function hideResultPopup() {
   const overlay = document.getElementById('result-overlay');
-  if (!overlay || !overlay.classList.contains('visible')) return;
-  overlay.classList.remove('visible');
+  if (overlay) overlay.classList.remove('visible');
   if (state.popupTimeoutId) {
     clearTimeout(state.popupTimeoutId);
     state.popupTimeoutId = null;
   }
-  state.cooldown = false;
+  // オーバーレイが見つからない場合でもcooldownは必ず解除する
+  setCooldown(false);
 }
 
 // =========================================
@@ -462,6 +601,16 @@ function renderMain() {
 
   destroyScanner();
 
+  // DOMを作り直すため、古いポップアップに紐づく状態を破棄する。
+  // 残したままだとタイマー発火時にcooldownが解除されず無反応になる
+  if (state.popupTimeoutId) {
+    clearTimeout(state.popupTimeoutId);
+    state.popupTimeoutId = null;
+  }
+  setCooldown(false);
+  state.startFailures = 0;
+  state.nextRetryAt = 0;
+
   document.getElementById('app').innerHTML = `
     <!-- ヘッダー -->
     <div class="header">
@@ -520,12 +669,8 @@ function renderMain() {
     <div id="error-banner" class="error-banner"></div>
   `;
 
-  updateClock();
   // 既存のタイマーをクリアしてから新規作成（リーク防止）
-  if (state.clockIntervalId) {
-    clearInterval(state.clockIntervalId);
-  }
-  state.clockIntervalId = setInterval(updateClock, 1000);
+  startClock();
   updateStats();
 
   // カメラ起動
@@ -534,7 +679,8 @@ function renderMain() {
   }
   state.scannerStartTimeoutId = setTimeout(() => {
     state.scannerStartTimeoutId = null;
-    void startScanner();
+    // restartScanner経由にして、起動中に健全性チェックが割り込まないようにする
+    void restartScanner('initial');
   }, 500);
 }
 
@@ -587,62 +733,77 @@ window.__startWithCampus = async function() {
   updateStats();
   void syncStatsFromServer();
   startStatsSync();
+  startCameraHealthCheck();
+  await requestWakeLock();
 };
 
 // =========================================
-// Page Visibility Recovery
-// ブラウザがバックグラウンドから復帰した時に
-// 時計とスキャナーを自動リカバリーする
+// Recovery
+// バックグラウンド復帰・bfcache復帰の際に、止まっている可能性のある
+// タイマーとカメラをまとめて復旧する
 // =========================================
+async function recoverSession(trigger) {
+  if (!state.campus) return;
+  console.log(`🔄 リカバリー中... (${trigger})`);
+  // 画面に戻ってきた時点で権限が変わっている可能性があるため、
+  // 起動失敗のバックオフはリセットして即座に再試行させる
+  state.startFailures = 0;
+  state.nextRetryAt = 0;
+  // タイマーを再セット（ブラウザがsuspendしている可能性があるため）
+  startClock();
+  startStatsSync();
+  startCameraHealthCheck();
+  await checkCameraHealth();
+  void syncStatsFromServer();
+  await requestWakeLock();
+}
+
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && state.campus) {
-    console.log('🔄 ページ復帰を検出 — リカバリー中...');
-    // 時計を即座に更新
-    updateClock();
-    // タイマーを再セット（ブラウザがsuspendしている可能性があるため）
-    if (state.clockIntervalId) {
-      clearInterval(state.clockIntervalId);
-    }
-    state.clockIntervalId = setInterval(updateClock, 1000);
-    // スキャナーが停止していたら再起動
-    if (!state.scanning && !state.cooldown) {
-      console.log('📷 スキャナー再起動...');
-      void startScanner();
-    }
-    // サーバーから統計を再同期
-    void syncStatsFromServer();
+  if (document.visibilityState === 'visible') {
+    void recoverSession('visibilitychange');
   }
+});
+
+// bfcacheからの復元ではvisibilitychangeが発火しないことがあるため、
+// pagehideで破棄したものをここで確実に復旧する
+window.addEventListener('pageshow', (event) => {
+  void recoverSession(event.persisted ? 'pageshow:bfcache' : 'pageshow');
 });
 
 // Wake Lock API: 画面スリープを防止（対応ブラウザのみ）
 let wakeLock = null;
+let requestingWakeLock = false;
 async function requestWakeLock() {
+  if (requestingWakeLock) return;
+  if (!('wakeLock' in navigator)) return;
+  if (wakeLock && !wakeLock.released) return;
+  if (document.visibilityState !== 'visible') return;
+  requestingWakeLock = true;
   try {
-    if ('wakeLock' in navigator) {
-      if (wakeLock && !wakeLock.released) return;
-      wakeLock = await navigator.wakeLock.request('screen');
-      wakeLock.addEventListener('release', () => {
-        console.log('⚡ Wake Lock released');
-      });
-      console.log('⚡ Wake Lock acquired — 画面スリープ防止中');
-    }
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => {
+      console.log('⚡ Wake Lock released');
+    });
+    console.log('⚡ Wake Lock acquired — 画面スリープ防止中');
   } catch (e) {
     console.warn('Wake Lock not available:', e);
+  } finally {
+    requestingWakeLock = false;
   }
 }
 
-// Wake Lockはvisibility changeで再取得が必要
-document.addEventListener('visibilitychange', async () => {
-  if (document.visibilityState === 'visible' && state.campus) {
-    await requestWakeLock();
-  }
-});
-
 window.addEventListener('pagehide', () => {
   destroyScanner();
-  if (state.clockIntervalId) clearInterval(state.clockIntervalId);
-  if (state.statsIntervalId) clearInterval(state.statsIntervalId);
-  if (state.scannerStartTimeoutId) clearTimeout(state.scannerStartTimeoutId);
+  // idを残すとbfcache復帰時に「起動処理が進行中」と誤判定され、
+  // カメラのリカバリーが永久にスキップされる
+  clearInterval(state.clockIntervalId);
+  clearInterval(state.statsIntervalId);
+  clearInterval(state.cameraHealthIntervalId);
+  clearTimeout(state.scannerStartTimeoutId);
+  state.clockIntervalId = null;
+  state.statsIntervalId = null;
+  state.cameraHealthIntervalId = null;
+  state.scannerStartTimeoutId = null;
 });
 
 // =========================================
@@ -657,6 +818,8 @@ async function init() {
     void syncStatsFromServer();
     // 30秒ごとにサーバーと同期（他デバイスのスキャンも反映）
     startStatsSync();
+    // カメラが止まっていないか定期的に確認して自動復旧する
+    startCameraHealthCheck();
     await requestWakeLock();
   } else {
     renderSetup();
